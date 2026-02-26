@@ -96,4 +96,21 @@ sub clear_attached {
     unlink $file if -f $file;
 }
 
+# Session type helpers
+
+sub is_cdp_session {
+    my ($session) = @_;
+    return 0 unless ref $session eq 'HASH';
+    # Explicit type check, or legacy sessions without type are assumed CDP
+    return 1 if !exists $session->{type};
+    return $session->{type} eq 'cdp';
+}
+
+sub is_webdriver_session {
+    my ($session) = @_;
+    return 0 unless ref $session eq 'HASH';
+    return 0 unless exists $session->{type};
+    return $session->{type} eq 'webdriver';
+}
+
 1;
