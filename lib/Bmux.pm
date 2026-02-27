@@ -316,6 +316,9 @@ sub _connect {
 
     my $cdp = Bmux::CDP->connect($tab->{ws_url});
     $cdp->{target_id} = $tab->{id};
+    # Bring browser to foreground — Chrome throttles background tabs
+    $cdp->send_command('Target.activateTarget', { targetId => $tab->{id} });
+    select(undef, undef, undef, 0.1);
     return $cdp;
 }
 

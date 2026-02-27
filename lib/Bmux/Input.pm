@@ -187,19 +187,9 @@ sub run_click {
     }
 
     # Coordinate-based click — the real deal.
-    # Step 1: Bring browser window to foreground via Target.activateTarget.
-    # This works because the *browser process* calls SetForegroundWindow,
-    # not us. Windows allows a process to foreground its own windows.
-    # This is exactly what Playwright does.
-    if ($cdp->{target_id}) {
-        $cdp->send_command('Target.activateTarget', {
-            targetId => $cdp->{target_id},
-        });
-        # Brief pause for window manager to process the focus change
-        select(undef, undef, undef, 0.1);
-    }
+    # Note: Target.activateTarget already called in _connect (Bmux.pm)
 
-    # Step 2: Scroll element into view and get its coordinates
+    # Step 1: Scroll element into view and get its coordinates
     my $resolved = $cdp->send_command('DOM.resolveNode', { nodeId => $nid });
     my $obj_id = $resolved->{object}{objectId};
 
