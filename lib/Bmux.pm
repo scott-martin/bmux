@@ -446,7 +446,7 @@ sub _wd_fill {
 sub _wd_type {
     my ($client, $parsed) = @_;
     my $selector = $parsed->{object} // die "Usage: bmux type <selector> <value>\n";
-    my $value = $parsed->{args}[0] // die "Usage: bmux type <selector> <value>\n";
+    my $value = $parsed->{value} // die "Usage: bmux type <selector> <value>\n";
     Bmux::WebDriver::Input::run_type($client, $selector, $value);
     print "Typed into $selector\n";
 }
