@@ -113,11 +113,12 @@ sub _launch_cdp_session {
 
     $session_mgr->save_session($name, { type => 'cdp', port => $port, pid => $pid, bin => $bin });
 
+    my $cport = Bmux::Browser::cdp_port($port);
     my $ready = 0;
     for (1..20) {
         sleep 1;
         eval {
-            my $r = HTTP::Tiny->new(timeout => 2)->get("http://localhost:$port/json/version");
+            my $r = HTTP::Tiny->new(timeout => 2)->get("http://${\Bmux::Browser::cdp_host()}:$cport/json/version");
             $ready = 1 if $r->{success};
         };
         last if $ready;
@@ -199,17 +200,17 @@ sub _cmd_tab {
     my $port = _resolve_port($parsed);
 
     if ($action eq 'list') {
-        my $r = HTTP::Tiny->new(timeout => 5)->get("http://localhost:$port/json");
+        my $r = HTTP::Tiny->new(timeout => 5)->get("http://${\Bmux::Browser::cdp_host()}:$port/json");
         die "Cannot connect to browser on port $port\n" unless $r->{success};
         my @tabs = Bmux::Tab::parse_tab_list($r->{content});
         print Bmux::Tab::format_tab_list(\@tabs) . "\n";
     } elsif ($action eq 'new') {
-        HTTP::Tiny->new(timeout => 5)->put("http://localhost:$port/json/new");
+        HTTP::Tiny->new(timeout => 5)->put("http://${\Bmux::Browser::cdp_host()}:$port/json/new");
         print "New tab opened.\n";
     } elsif ($action eq 'kill') {
         my $idx = $parsed->{object} // $parsed->{target}{tab}
             // die "Usage: bmux tab kill <index>\n";
-        my $r = HTTP::Tiny->new(timeout => 5)->get("http://localhost:$port/json");
+        my $r = HTTP::Tiny->new(timeout => 5)->get("http://${\Bmux::Browser::cdp_host()}:$port/json");
         die "Cannot connect to browser on port $port\n" unless $r->{success};
         my @tabs = Bmux::Tab::parse_tab_list($r->{content});
         my $tab = Bmux::Tab::find_by_index(\@tabs, $idx)
@@ -303,7 +304,7 @@ sub _connect {
     my $port = _resolve_port($parsed);
     my $tab_idx = _resolve_tab($parsed);
 
-    my $r = HTTP::Tiny->new(timeout => 5)->get("http://localhost:$port/json");
+    my $r = HTTP::Tiny->new(timeout => 5)->get("http://${\Bmux::Browser::cdp_host()}:$port/json");
     die "Cannot connect to browser on port $port\n" unless $r->{success};
 
     my @tabs = Bmux::Tab::parse_tab_list($r->{content});
@@ -329,7 +330,7 @@ sub _resolve_port {
         // die "Not attached. Run: bmux attach <session>\n";
     my $s = $session_mgr->load_sessions()->{$name}
         // die "No session named '$name'\n";
-    return $s->{port};
+    return Bmux::Browser::cdp_port($s->{port});
 }
 
 sub _resolve_tab {
@@ -446,7 +447,7 @@ sub _wd_fill {
 sub _wd_type {
     my ($client, $parsed) = @_;
     my $selector = $parsed->{object} // die "Usage: bmux type <selector> <value>\n";
-    my $value = $parsed->{value} // die "Usage: bmux type <selector> <value>\n";
+    my $value = $parsed->{args}[0] // die "Usage: bmux type <selector> <value>\n";
     Bmux::WebDriver::Input::run_type($client, $selector, $value);
     print "Typed into $selector\n";
 }

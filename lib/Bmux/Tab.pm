@@ -2,6 +2,7 @@ package Bmux::Tab;
 use strict;
 use warnings;
 use JSON::PP;
+use Bmux::Browser;
 
 # Parse the /json endpoint response into a filtered, indexed tab list.
 # Only includes targets of type "page".
@@ -19,7 +20,7 @@ sub parse_tab_list {
             id     => $entry->{id},
             title  => $entry->{title} // '',
             url    => $entry->{url} // '',
-            ws_url => $entry->{webSocketDebuggerUrl} // '',
+            ws_url => _rewrite_ws_url($entry->{webSocketDebuggerUrl} // ''),
         };
     }
 
@@ -54,6 +55,15 @@ sub format_tab_list {
 sub close_target {
     my ($cdp, $target_id) = @_;
     $cdp->send_command('Target.closeTarget', { targetId => $target_id });
+}
+
+sub _rewrite_ws_url {
+    my ($url) = @_;
+    return $url unless $url && Bmux::Browser::is_wsl();
+    my $host = Bmux::Browser::cdp_host();
+    # Only rewrite host — portproxy already returns the correct port
+    $url =~ s{^(ws://)([^:]+)}{$1$host};
+    return $url;
 }
 
 1;
