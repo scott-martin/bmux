@@ -196,9 +196,23 @@ sub _launch_webdriver_session {
 sub _cmd_attach {
     my ($parsed) = @_;
     my $t = $parsed->{target} // die "Usage: bmux attach <session[:tab]>\n";
-    my $str = defined $t->{tab} ? "$t->{session}:$t->{tab}" : $t->{session};
-    $session_mgr->save_attached($str);
-    print "Attached to $str.\n";
+
+    if (defined $t->{tab}) {
+        # Resolve index to a stable target ID
+        my $port = _resolve_port($parsed);
+        my $r = HTTP::Tiny->new(timeout => 5)
+            ->get("http://${\Bmux::Browser::cdp_host()}:$port/json");
+        die "Cannot connect to browser on port $port\n" unless $r->{success};
+        my @tabs = Bmux::Tab::parse_tab_list($r->{content});
+        my $tab = Bmux::Tab::find_by_index(\@tabs, $t->{tab})
+            // die "Tab $t->{tab} not found (" . scalar(@tabs) . " tabs)\n";
+        my $str = "$t->{session}=$tab->{id}";
+        $session_mgr->save_attached($str);
+        print "Attached to $t->{session}:$t->{tab} ($tab->{title})\n";
+    } else {
+        $session_mgr->save_attached($t->{session});
+        print "Attached to $t->{session}.\n";
+    }
 }
 
 sub _cmd_detach {
@@ -235,8 +249,13 @@ sub _cmd_tab {
         my $idx = $parsed->{object} // $parsed->{target}{tab}
             // die "Usage: bmux tab select <index>\n";
         my $sess = _attached_session() // die "Not attached. Run: bmux attach <session>\n";
-        $session_mgr->save_attached("$sess:$idx");
-        print "Selected tab $idx.\n";
+        my $r = HTTP::Tiny->new(timeout => 5)->get("http://${\Bmux::Browser::cdp_host()}:$port/json");
+        die "Cannot connect to browser on port $port\n" unless $r->{success};
+        my @tabs = Bmux::Tab::parse_tab_list($r->{content});
+        my $tab = Bmux::Tab::find_by_index(\@tabs, $idx)
+            // die "Tab $idx not found (" . scalar(@tabs) . " tabs)\n";
+        $session_mgr->save_attached("$sess=$tab->{id}");
+        print "Selected tab $idx ($tab->{title})\n";
     }
 }
 
@@ -387,7 +406,7 @@ sub _cmd_perf {
 sub _connect {
     my ($parsed) = @_;
     my $port = _resolve_port($parsed);
-    my $tab_idx = _resolve_tab($parsed);
+    my $tab_ref = _resolve_tab($parsed);
 
     my $r = HTTP::Tiny->new(timeout => 5)->get("http://${\Bmux::Browser::cdp_host()}:$port/json");
     die "Cannot connect to browser on port $port\n" unless $r->{success};
@@ -395,10 +414,16 @@ sub _connect {
     my @tabs = Bmux::Tab::parse_tab_list($r->{content});
     die "No tabs found\n" unless @tabs;
 
-    my $tab = defined $tab_idx
-        ? (Bmux::Tab::find_by_index(\@tabs, $tab_idx)
-           // die "Tab $tab_idx not found (" . scalar(@tabs) . " tabs)\n")
-        : $tabs[0];
+    my $tab;
+    if (!defined $tab_ref) {
+        $tab = $tabs[0];
+    } elsif ($tab_ref->{type} eq 'id') {
+        $tab = Bmux::Tab::find_by_id(\@tabs, $tab_ref->{value})
+            // die "Tab with target ID $tab_ref->{value} not found (closed?)\n";
+    } else {
+        $tab = Bmux::Tab::find_by_index(\@tabs, $tab_ref->{value})
+            // die "Tab $tab_ref->{value} not found (" . scalar(@tabs) . " tabs)\n";
+    }
 
     my $cdp = Bmux::CDP->connect($tab->{ws_url});
     $cdp->{target_id} = $tab->{id};
@@ -418,12 +443,23 @@ sub _resolve_port {
     return Bmux::Browser::cdp_port($s->{port});
 }
 
+# Returns { type => 'id', value => 'TARGETID' } or { type => 'index', value => N } or undef.
 sub _resolve_tab {
     my ($parsed) = @_;
-    return $parsed->{target}{tab} if $parsed->{target} && defined $parsed->{target}{tab};
+    # Explicit target on command line (e.g. edge:3) — resolve index to ID now
+    if ($parsed->{target} && defined $parsed->{target}{tab}) {
+        return { type => 'index', value => $parsed->{target}{tab} };
+    }
+    # Stored attachment — new format uses = for target ID
     my $a = $session_mgr->load_attached() // return undef;
-    my ($tab) = $a =~ /:(\d+)$/;
-    return $tab;
+    if ($a =~ /=(.+)$/) {
+        return { type => 'id', value => $1 };
+    }
+    # Legacy format: session:index
+    if ($a =~ /:(\d+)$/) {
+        return { type => 'index', value => int($1) };
+    }
+    return undef;
 }
 
 sub _attached_session {

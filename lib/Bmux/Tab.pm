@@ -36,6 +36,15 @@ sub find_by_index {
     return undef;
 }
 
+# Find a tab by CDP target ID. Returns hashref or undef.
+sub find_by_id {
+    my ($tabs, $id) = @_;
+    for my $tab (@$tabs) {
+        return $tab if $tab->{id} eq $id;
+    }
+    return undef;
+}
+
 # Format tab list for human-readable display.
 sub format_tab_list {
     my ($tabs) = @_;

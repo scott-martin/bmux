@@ -94,6 +94,23 @@ my $json_response = encode_json([
     is($tab, undef, 'out of range returns undef');
 }
 
+# Find tab by target ID
+{
+    my @tabs = Bmux::Tab::parse_tab_list($json_response);
+    my $tab = Bmux::Tab::find_by_id(\@tabs, 'GHI789');
+
+    is($tab->{id}, 'GHI789', 'find by id');
+    is($tab->{title}, 'Omatic - Data Queue', 'find by id title');
+}
+
+# Find tab by target ID — not found
+{
+    my @tabs = Bmux::Tab::parse_tab_list($json_response);
+    my $tab = Bmux::Tab::find_by_id(\@tabs, 'NOPE');
+
+    is($tab, undef, 'find by id not found returns undef');
+}
+
 # Format tab list for display
 {
     my @tabs = Bmux::Tab::parse_tab_list($json_response);
