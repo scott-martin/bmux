@@ -202,32 +202,31 @@ use Bmux::CDP;
     my @calls = @{$mock->{calls}};
     my @methods = map { $_->{method} } @calls;
 
-    # Verify the sequence: getDocument → querySelector → activate →
+    # Verify the sequence: getDocument → querySelector →
     # resolveNode → scrollIntoView → getBoxModel → 3x dispatchMouseEvent
+    # Note: Target.activateTarget is called in _connect (Bmux.pm), not run_click
     is($methods[0], 'DOM.getDocument', 'run_click: gets document');
     is($methods[1], 'DOM.querySelector', 'run_click: finds element');
     is($calls[1]{params}{selector}, 'button.login', 'run_click: correct selector');
-    is($methods[2], 'Target.activateTarget', 'run_click: activates target');
-    is($calls[2]{params}{targetId}, 'TAB-42', 'run_click: correct target id');
-    is($methods[3], 'DOM.resolveNode', 'run_click: resolves node');
-    is($methods[4], 'Runtime.callFunctionOn', 'run_click: scrollIntoView');
-    like($calls[4]{params}{functionDeclaration}, qr/scrollIntoView/,
+    is($methods[2], 'DOM.resolveNode', 'run_click: resolves node');
+    is($methods[3], 'Runtime.callFunctionOn', 'run_click: scrollIntoView');
+    like($calls[3]{params}{functionDeclaration}, qr/scrollIntoView/,
          'run_click: scrollIntoViewIfNeeded');
-    is($methods[5], 'DOM.getBoxModel', 'run_click: gets box model');
+    is($methods[4], 'DOM.getBoxModel', 'run_click: gets box model');
 
     # The three mouse events
-    is($methods[6], 'Input.dispatchMouseEvent', 'run_click: mouseMoved');
-    is($calls[6]{params}{type}, 'mouseMoved', 'run_click: mouseMoved type');
-    is($methods[7], 'Input.dispatchMouseEvent', 'run_click: mousePressed');
-    is($calls[7]{params}{type}, 'mousePressed', 'run_click: mousePressed type');
-    is($methods[8], 'Input.dispatchMouseEvent', 'run_click: mouseReleased');
-    is($calls[8]{params}{type}, 'mouseReleased', 'run_click: mouseReleased type');
+    is($methods[5], 'Input.dispatchMouseEvent', 'run_click: mouseMoved');
+    is($calls[5]{params}{type}, 'mouseMoved', 'run_click: mouseMoved type');
+    is($methods[6], 'Input.dispatchMouseEvent', 'run_click: mousePressed');
+    is($calls[6]{params}{type}, 'mousePressed', 'run_click: mousePressed type');
+    is($methods[7], 'Input.dispatchMouseEvent', 'run_click: mouseReleased');
+    is($calls[7]{params}{type}, 'mouseReleased', 'run_click: mouseReleased type');
 
     # Verify coordinates are center of the box (150, 225)
-    is($calls[6]{params}{x}, 150, 'run_click: click x = center');
-    is($calls[6]{params}{y}, 225, 'run_click: click y = center');
-    is($calls[7]{params}{x}, 150, 'run_click: press x = center');
-    is($calls[7]{params}{y}, 225, 'run_click: press y = center');
+    is($calls[5]{params}{x}, 150, 'run_click: click x = center');
+    is($calls[5]{params}{y}, 225, 'run_click: click y = center');
+    is($calls[6]{params}{x}, 150, 'run_click: press x = center');
+    is($calls[6]{params}{y}, 225, 'run_click: press y = center');
 
     like($out, qr/Clicked button\.login at \(150, 225\)/, 'run_click: output message');
 }

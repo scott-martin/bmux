@@ -11,6 +11,7 @@ use Bmux::Navigate;
 use Bmux::Capture;
 use Bmux::Input;
 use Bmux::Eval;
+use Bmux::Perf;
 use Bmux::Browser;
 use Bmux::WebDriver::Client;
 use Bmux::WebDriver::Session;
@@ -101,17 +102,28 @@ sub _launch_cdp_session {
     my $bin = Bmux::Browser::find_by_name($name);
     die "Browser not found: $bin\n" unless -f $bin;
 
+    # Remove sessions with dead PIDs (e.g. after reboot)
+    my $pruned = $session_mgr->prune_stale();
+    print "Pruned $pruned stale session(s).\n" if $pruned;
+
     my $sessions = $session_mgr->load_sessions();
     my %used = map { $_->{port} => 1 } values %$sessions;
     my $port = 9222;
     $port++ while $used{$port};
 
-    my $pid = Bmux::Browser::spawn($bin,
-        "--remote-debugging-port=$port",
-        "--user-data-dir=" . Bmux::Browser::temp_profile($name),
-    );
+    my @launch_args = ("--remote-debugging-port=$port");
+    # On WSL we kill existing Edge first, so we can use the default profile.
+    # This lets links from other apps open in the bmux-controlled window.
+    # On other platforms, use an isolated profile to avoid conflicts.
+    push @launch_args, "--user-data-dir=" . Bmux::Browser::temp_profile($name)
+        unless Bmux::Browser::is_wsl();
+
+    my $pid = Bmux::Browser::spawn($bin, @launch_args);
 
     $session_mgr->save_session($name, { type => 'cdp', port => $port, pid => $pid, bin => $bin });
+
+    # On WSL, ensure the portproxy/firewall bridge is working
+    Bmux::Browser::ensure_cdp_bridge($port);
 
     my $cport = Bmux::Browser::cdp_port($port);
     my $ready = 0;
@@ -297,6 +309,79 @@ sub _cmd_cookies {
     print encode_json($r->{cookies} // []) . "\n";
 }
 
+sub _cmd_cdp {
+    my ($cdp, $parsed) = @_;
+    my $method = $parsed->{object} // die "Usage: bmux cdp <method> [json-params]\n";
+    my $params;
+    if (defined $parsed->{value}) {
+        $params = eval { decode_json($parsed->{value}) };
+        die "Invalid JSON params: $@\n" if $@;
+    }
+    my $result = $cdp->send_command($method, $params);
+    print encode_json($result) . "\n";
+}
+
+sub _perf_get_metrics {
+    my ($cdp) = @_;
+    $cdp->send_command('Performance.enable');
+    my $m = $cdp->send_command('Performance.getMetrics');
+    return $m->{metrics};
+}
+
+sub _cmd_perf {
+    my ($cdp, $parsed) = @_;
+    my $action = $parsed->{action}
+        // die "Usage: bmux perf <snapshot|listeners|heap|save|list|delete|compare>\n";
+
+    if ($action eq 'snapshot') {
+        print Bmux::Perf::format_snapshot(_perf_get_metrics($cdp));
+    }
+    elsif ($action eq 'listeners') {
+        my $count = Bmux::Perf::extract_metric(_perf_get_metrics($cdp), 'JSEventListeners');
+        print "JSEventListeners: $count\n";
+    }
+    elsif ($action eq 'heap') {
+        my $used = Bmux::Perf::extract_metric(_perf_get_metrics($cdp), 'JSHeapUsedSize');
+        print "JSHeapUsedSize: " . Bmux::Perf::format_bytes($used) . "\n";
+    }
+    elsif ($action eq 'save') {
+        my $name = $parsed->{object} // die "Usage: bmux perf save <name>\n";
+        Bmux::Perf::save_baseline($name, _perf_get_metrics($cdp));
+        print "Saved ./perf/$name.json\n";
+    }
+    elsif ($action eq 'list') {
+        my @names = Bmux::Perf::list_baselines();
+        if (@names) { print "$_\n" for @names }
+        else        { print "No baselines in ./perf/\n" }
+    }
+    elsif ($action eq 'delete') {
+        my $name = $parsed->{object} // die "Usage: bmux perf delete <name>\n";
+        Bmux::Perf::delete_baseline($name);
+        print "Deleted ./perf/$name.json\n";
+    }
+    elsif ($action eq 'compare') {
+        my $name1 = $parsed->{object} // die "Usage: bmux perf compare <name> [name2]\n";
+        my $name2 = $parsed->{value};
+
+        my $before = Bmux::Perf::load_baseline($name1)
+            // die "No baseline '$name1'. Run: bmux perf save $name1\n";
+
+        my $after;
+        if ($name2) {
+            $after = Bmux::Perf::load_baseline($name2)
+                // die "No baseline '$name2'.\n";
+        } else {
+            $after = _perf_get_metrics($cdp);
+        }
+
+        print Bmux::Perf::format_diff(Bmux::Perf::diff_metrics($before, $after));
+    }
+    else {
+        die "Unknown perf action: $action\n"
+          . "Usage: bmux perf <snapshot|listeners|heap|save|list|delete|compare>\n";
+    }
+}
+
 # --- Connection helpers ---
 
 sub _connect {
@@ -376,6 +461,8 @@ sub _dispatch_cdp {
     elsif ($verb eq 'eval')    { _cmd_eval($cdp, $parsed) }
     elsif ($verb eq 'storage') { _cmd_storage($cdp, $parsed) }
     elsif ($verb eq 'cookies') { _cmd_cookies($cdp) }
+    elsif ($verb eq 'cdp')     { _cmd_cdp($cdp, $parsed) }
+    elsif ($verb eq 'perf')    { _cmd_perf($cdp, $parsed) }
     elsif ($verb eq 'console') { die "Console inspection requires --follow for CDP\n" }
     elsif ($verb eq 'network') { die "Network inspection requires --follow for CDP\n" }
     elsif ($verb eq 'scripts') { die "Script listing not implemented\n" }

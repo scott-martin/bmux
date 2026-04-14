@@ -2,6 +2,7 @@ package Bmux::Session;
 use strict;
 use warnings;
 use JSON::PP;
+use HTTP::Tiny;
 use File::Path qw(mkpath);
 
 sub new {
@@ -94,6 +95,53 @@ sub clear_attached {
     my ($self) = @_;
     my $file = $self->_attached_file();
     unlink $file if -f $file;
+}
+
+# Remove sessions whose PIDs are no longer running.
+# On WSL, the stored PID is the WSL /init wrapper — check via powershell.
+# Returns the number of pruned sessions.
+sub prune_stale {
+    my ($self) = @_;
+    my $sessions = $self->load_sessions();
+    return 0 unless %$sessions;
+
+    my $pruned = 0;
+    for my $name (keys %$sessions) {
+        my $pid = $sessions->{$name}{pid} // next;
+        next if _pid_alive($pid, $sessions->{$name});
+        delete $sessions->{$name};
+        $pruned++;
+    }
+    $self->_write_sessions($sessions) if $pruned;
+    return $pruned;
+}
+
+sub _pid_alive {
+    my ($pid, $session) = @_;
+    # WSL: the stored PID is the /init shim, and process-name checks can't
+    # distinguish between sessions. Probe the CDP port instead.
+    if (_is_wsl() && $session && $session->{type} && $session->{type} eq 'cdp') {
+        require Bmux::Browser;
+        my $port = Bmux::Browser::cdp_port($session->{port});
+        my $host = Bmux::Browser::cdp_host();
+        my $r = HTTP::Tiny->new(timeout => 2)->get("http://$host:$port/json/version");
+        return $r->{success} ? 1 : 0;
+    }
+    # Unix/Windows: just check if the PID exists
+    return kill(0, $pid);
+}
+
+{
+    my $_is_wsl;
+    sub _is_wsl {
+        return $_is_wsl if defined $_is_wsl;
+        $_is_wsl = (-f '/proc/version' && do {
+            open my $fh, '<', '/proc/version';
+            my $v = <$fh>; close $fh;
+            $v =~ /microsoft/i;
+        }) ? 1 : 0;
+        return $_is_wsl;
+    }
 }
 
 # Session type helpers

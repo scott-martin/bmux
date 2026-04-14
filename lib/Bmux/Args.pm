@@ -3,7 +3,7 @@ use strict;
 use warnings;
 
 # Verbs that take a sub-action as second arg
-my %COMPOUND_VERBS = map { $_ => 1 } qw(session tab);
+my %COMPOUND_VERBS = map { $_ => 1 } qw(session tab perf);
 
 # Verbs that take a value after the object (selector + value)
 my %VALUE_VERBS = map { $_ => 1 } qw(fill type style select);
@@ -97,7 +97,8 @@ sub _parse_remaining {
         $result->{target} = _parse_target(shift @$rest);
     }
     # bare word — target if: verb says so, OR there are more args after
-    elsif (_is_target($rest->[0]) && ($bare_is_target || @$rest > 1)) {
+    # (but not for compound verbs — their remaining args are always data)
+    elsif (_is_target($rest->[0]) && ($bare_is_target || (@$rest > 1 && !$COMPOUND_VERBS{$verb // ''}))) {
         $result->{target} = _parse_target(shift @$rest);
     }
 

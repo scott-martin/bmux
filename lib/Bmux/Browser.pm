@@ -130,6 +130,56 @@ sub cdp_port {
     return $IS_WSL ? $port + 10000 : $port;
 }
 
+# Ensure the WSL-to-Windows CDP bridge is working for the given port.
+# Sets up portproxy and firewall rules if needed. No-op on non-WSL.
+sub ensure_cdp_bridge {
+    my ($port) = @_;
+    return unless $IS_WSL;
+
+    my $proxy_port = cdp_port($port);
+    my $host = cdp_host();
+
+    # Quick probe — if it's already working, skip setup
+    my $r = HTTP::Tiny->new(timeout => 2)->get("http://$host:$proxy_port/json/version");
+    return if $r->{success};
+
+    print "Setting up CDP bridge ($proxy_port -> $port)...\n";
+
+    # portproxy: forward 0.0.0.0:$proxy_port -> 127.0.0.1:$port
+    _psh_elevated("netsh interface portproxy delete v4tov4 listenport=$proxy_port listenaddress=0.0.0.0");
+    _psh_elevated("netsh interface portproxy add v4tov4 listenaddress=0.0.0.0 listenport=$proxy_port connectaddress=127.0.0.1 connectport=$port");
+
+    # Firewall: allow inbound on the proxy port
+    _psh_elevated("netsh advfirewall firewall delete rule name=\"bmux CDP $proxy_port\" >NUL 2>&1");
+    _psh_elevated("netsh advfirewall firewall add rule name=\"bmux CDP $proxy_port\" dir=in action=allow protocol=TCP localport=$proxy_port");
+
+    # Hyper-V firewall: allow WSL inbound (resets on every WSL restart)
+    _psh_elevated("Set-NetFirewallHyperVVMSetting -Name '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -DefaultInboundAction Allow");
+
+    # Verify
+    sleep 1;
+    $r = HTTP::Tiny->new(timeout => 3)->get("http://$host:$proxy_port/json/version");
+    return if $r->{success};
+    die "CDP bridge setup failed: cannot reach $host:$proxy_port after configuring portproxy.\n"
+      . "Try running the netsh commands manually in an elevated PowerShell.\n";
+}
+
+sub _psh_elevated {
+    my ($cmd) = @_;
+    # Run as admin via Start-Process. For netsh commands, split exe from args.
+    # For PowerShell cmdlets, wrap in powershell -Command.
+    my ($exe, $args);
+    if ($cmd =~ /^netsh\s+(.*)/) {
+        $exe = 'netsh';
+        $args = $1;
+    } else {
+        $exe = 'powershell';
+        $args = "-Command $cmd";
+    }
+    $args =~ s/'/\\'/g;  # escape for outer powershell string
+    system(qq{powershell.exe -NoProfile -Command "Start-Process '$exe' -ArgumentList '$args' -Verb RunAs -Wait -WindowStyle Hidden" 2>/dev/null});
+}
+
 # Check if a browser is already running (Windows only)
 sub _is_running_windows {
     my ($bin) = @_;
@@ -155,15 +205,16 @@ sub spawn {
             my ($exe) = $bin =~ /([^\/\\]+)$/;
             my $pname = $exe =~ s/\.exe$//r;
             print "Killing stray $exe processes...\n";
-            `powershell.exe -Command "Stop-Process -Name '$pname' -Force -ErrorAction SilentlyContinue" 2>/dev/null`;
-            # Wait until fully dead — Edge auto-restarts aggressively
-            for (1..10) {
-                last unless _is_running_wsl($bin);
-                `powershell.exe -Command "Stop-Process -Name '$pname' -Force -ErrorAction SilentlyContinue" 2>/dev/null`;
+            # Kill ALL processes (main + renderer + GPU + utility) to prevent
+            # partial cleanup that confuses the "is it still running?" check.
+            for (1..15) {
+                `powershell.exe -NoProfile -Command "Get-Process -Name '$pname' -ErrorAction SilentlyContinue | Stop-Process -Force" 2>/dev/null`;
                 sleep 1;
+                last unless _is_running_wsl($bin);
             }
             if (_is_running_wsl($bin)) {
-                die "Cannot stop $exe — it keeps restarting. Disable Edge auto-restore and retry.\n";
+                die "Cannot stop $exe — it keeps restarting.\n"
+                  . "Disable Edge startup boost: edge://settings/system > uncheck 'Startup boost'\n";
             }
         }
     }

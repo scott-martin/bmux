@@ -6,6 +6,7 @@ use JSON::PP;
 use FindBin;
 use lib "$FindBin::Bin/../lib";
 use Bmux::Tab;
+use Bmux::Browser;
 
 # Simulated /json response from Chrome
 my $json_response = encode_json([
@@ -68,7 +69,8 @@ my $json_response = encode_json([
     is($tabs[0]{id}, 'ABC123', 'tab 1 id');
     is($tabs[0]{title}, 'Google', 'tab 1 title');
     is($tabs[0]{url}, 'https://www.google.com/', 'tab 1 url');
-    is($tabs[0]{ws_url}, 'ws://localhost:9222/devtools/page/ABC123', 'tab 1 ws_url');
+    my $host = Bmux::Browser::cdp_host();
+    is($tabs[0]{ws_url}, "ws://$host:9222/devtools/page/ABC123", 'tab 1 ws_url');
 
     is($tabs[1]{id}, 'GHI789', 'tab 2 id');
     is($tabs[1]{title}, 'Omatic - Data Queue', 'tab 2 title');
